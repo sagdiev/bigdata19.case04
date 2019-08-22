@@ -40,11 +40,16 @@ def model():
         select
             hash_number_A
             ,interest_1
+            ,interest_2
+            ,interest_3
+            ,interest_4
+            ,interest_5
+            ,device_type
             ,phone_price_category
             ,sum(cost) as label
         from data
-        group by hash_number_A, interest_1, phone_price_category''')
-            # ,phone_price_category
+        group by {", ".join(str(n) for n in range(1, 8+1))}''')
+    breakpoint()
 
     pipeline = Pipeline(stages=[
         StringIndexer(inputCol='interest_1', outputCol='interest'),
