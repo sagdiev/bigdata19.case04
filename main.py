@@ -1,8 +1,14 @@
 from pyspark import SparkContext
 from pyspark.sql import SQLContext
+from pyspark.sql.functions import col
+from pyspark.sql.types import FloatType
 from pyspark.ml import Pipeline
+from pyspark.ml.classification import DecisionTreeClassifier, LogisticRegression, RandomForestClassifier
+from pyspark.ml.evaluation import BinaryClassificationEvaluator
 from pyspark.ml.feature import StringIndexer, VectorAssembler
 from pyspark.ml.regression import GeneralizedLinearRegression
+from pyspark.ml.stat import Correlation, Summarizer
+import sys
 
 import config
 
@@ -14,24 +20,18 @@ spark = SparkContext.getOrCreate()
 sql = SQLContext(spark)
 
 
+def convert():
+    """Convert CSV to Parquet."""
+    df = sql.read.csv(str(DATA_CSV), header=True, inferSchema='true')
+    for field in ['cost', 'call_duration_minutes', 'data_volume_mb', 'LAT', 'LON']:
+        df = df.withColumn(field, df[field].cast(FloatType()))
+    df.write.parquet(str(DATA_PARQUET))
+
+
 def explore():
 
-    #datafile = spark.textFile(f'file://{DATA_CSV}')
-    #breakpoint()
-    #type(datafile)
-    #datafile.first()
-
-    #df = sql.read.csv(str(DATA_CSV), header=True, inferSchema='true')
-    #breakpoint()
-    #df.show()
-    #df.printSchema()
-
-    #df.write.parquet(str(DATA_PARQUET))
-    #breakpoint()
-    #df.groupby('event').count().show()
-    #for c in df.columns: print(c); df.groupby(c).count().show()
-
     df = sql.read.parquet(str(DATA_PARQUET))
+    df.printSchema()
     breakpoint()
 
     df.agg({'target': 'max'}).collect()
@@ -69,6 +69,75 @@ def explore():
     df.cube('device_type', 'phone_price_category').sum('cost', 'target').show()
 
 
+def basic_statistics():
+    """Basic statistics."""
+
+    df = sql.read.parquet(str(DATA_PARQUET))
+
+    numeric = ['cost', 'call_duration_minutes', 'data_volume_mb']
+    assemble = VectorAssembler(inputCols=numeric, outputCol='features')
+    features = assemble.transform(df.dropna(subset=numeric+['target']))
+
+    breakpoint()
+
+    # summarize
+    summarize = Summarizer().metrics('mean', 'variance', 'count', 'numNonZeros', 'max', 'min', 'normL2', 'normL1')
+    features.select(summarize.summary(features['features'])).show(truncate=False)
+
+    # correlations
+    r1 = Correlation.corr(features, 'features', 'pearson').head()[0]
+    small = features.sample(fraction=0.1, seed=100500)
+    r2 = Correlation.corr(small, 'features', 'spearman').head()[0]
+
+
+def classify_target():
+    """Forecast binary target."""
+
+    df = sql.read.parquet(str(DATA_PARQUET))
+    features = ['cost', 'call_duration_minutes', 'data_volume_mb']
+    variables = features + ['test_flag', 'target']
+
+    pipeline_prepare = Pipeline(stages=[
+        VectorAssembler(inputCols=features, outputCol='features'),
+        ])
+
+    prepared = pipeline_prepare.fit(df).transform(df.dropna(subset=variables))
+    training = prepared.filter(col('test_flag') == 0)
+    testing = prepared.filter(col('test_flag') == 1)
+    training_small = training.sample(fraction=0.3, seed=100500)
+
+    evaluator = BinaryClassificationEvaluator(rawPredictionCol='prediction', labelCol='target')
+
+    breakpoint()
+
+    # Logistic regression
+
+    classifier = LogisticRegression(regParam=0.3, elasticNetParam=0,
+        featuresCol='features', labelCol='target', predictionCol='prediction', probabilityCol='probability')
+    model = classifier.fit(training_small)
+    predicted = model.transform(testing)
+    print('Test Area Under ROC: ', evaluator.evaluate(predicted))
+
+    breakpoint()
+
+    # Decision Tree Classifier
+
+    classifier = DecisionTreeClassifier(featuresCol='features', labelCol='target', maxDepth=3)
+    model = classifier.fit(training_small)
+    predicted = model.transform(testing)
+    print('Test Area Under ROC: ', evaluator.evaluate(predicted))
+
+    breakpoint()
+
+    # Random Forest Classifier
+    rf = RandomForestClassifier(featuresCol='features', labelCol='label')
+    model = classifier.fit(training_small)
+    predicted = model.transform(testing)
+    print('Test Area Under ROC: ', evaluator.evaluate(predicted))
+
+    breakpoint()
+
+
 def model():
 
     data = sql.read.parquet(str(DATA_PARQUET))
@@ -102,3 +171,12 @@ def model():
     regression = GeneralizedLinearRegression(family='gaussian', labelCol='label', featuresCol='features', maxIter=10, regParam=0.3)
     model = regression.fit(sample)
     breakpoint()
+
+
+def main():
+    print('Executing main()')
+    exec(sys.argv[1])
+
+
+if __name__ == '__main__':
+    main()
