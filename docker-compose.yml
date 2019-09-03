@@ -31,6 +31,11 @@ services:
     environment:
       - SPARK_SERVICE=worker
       - SPARK_MASTER_HOST=master
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: '4G'
 
   client:
     image: bigdata19
@@ -43,6 +48,11 @@ services:
     volumes:
       - '.:/code'
     working_dir: '/code'
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: '4G'
 
 networks:
 
